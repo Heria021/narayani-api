@@ -8,9 +8,10 @@ import { loadEnv } from './loadEnv.mjs';
 loadEnv();
 
 const port = 3000;
-const ORIGIN = 'https://narayani-zej2.onrender.com';
-
 const app = express();
+app.use(cors());
+app.use(bodyParser.urlencoded({ extended: false }));
+app.use(bodyParser.json());
 
 // MongoDB connection setup
 mongoose.connect(process.env.MONGO_URL);
@@ -42,9 +43,7 @@ const Visit = mongoose.model('Visit', VisitSchema);
 const storage = multer.memoryStorage(); // Store files in memory as Buffer
 const upload = multer({ storage: storage });
 
-app.use(cors({ origin: ORIGIN }));
-app.use(bodyParser.urlencoded({ extended: false }));
-app.use(bodyParser.json());
+
 
 // Route to handle Contact form submissions
 app.post("/Contact", upload.single('file'), async (req, res) => {
