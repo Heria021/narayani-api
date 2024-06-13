@@ -1,88 +1,111 @@
+// Import necessary modules
 import express from "express";
 import bodyParser from "body-parser";
 import cors from "cors";
 import multer from "multer";
-import twilio from "twilio";
+import mongoose from "mongoose";
 import { loadEnv } from './loadEnv.mjs';
-import fs from 'fs/promises';
 loadEnv();
 
-const accountSid = process.env.ACC_SID
-const authToken = process.env.ACC_TOKEN
-const port = process.env.PORT;
-const twilio_whatspp_from = process.env.TWILIO_WHATSAPP_FROM;
-const twilio_whatspp_to = process.env.TWILIO_WHATSAPP_TO;
-const ORIGIN = process.env.ORIGIN
+const port = 3000;
+const ORIGIN = 'https://narayani-zej2.onrender.com';
 
 const app = express();
-// Twilio configuration
-const client = new twilio(accountSid, authToken);
 
-// Multer configuration
-const upload = multer();
+// MongoDB connection setup
+mongoose.connect(process.env.MONGO_URL, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+});
+const db = mongoose.connection;
+db.on('error', console.error.bind(console, 'MongoDB connection error:'));
+
+// Define schemas and models for MongoDB
+const ContactSchema = new mongoose.Schema({
+    fullName: { type: String, required: true },
+    city: { type: String, required: true },
+    telephone: { type: String, required: true },
+    address: { type: String, required: true },
+    message: { type: String, required: true },
+    file: { data: Buffer, contentType: String },
+    SchDate: { type: Date },
+    date: { type: Date, default: Date.now }
+});
+
+const VisitSchema = new mongoose.Schema({
+    email: { type: String, required: true },
+    phoneNumber: { type: String, required: true },
+    date: { type: Date, default: Date.now }
+});
+
+const Contact = mongoose.model('Contact', ContactSchema);
+const Visit = mongoose.model('Visit', VisitSchema);
+
+// Multer configuration for file uploads
+const storage = multer.memoryStorage(); // Store files in memory as Buffer
+const upload = multer({ storage: storage });
 
 app.use(cors({ origin: ORIGIN }));
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-const sendWhatsAppMessage = (message) => {
-    client.messages
-        .create({
-            body: message,
-            from: twilio_whatspp_from,
-            to: twilio_whatspp_to 
-        })
-        .then(message => console.log(`Message sent: ${message.sid}`))
-        .catch(error => {
-            console.error('Error sending message:', error);
-            if (error.status === 400 && error.code === 63007) {
-                console.error('Twilio could not find a Channel with the specified From address. Please check your Twilio WhatsApp number.');
-            }
-        });
-};
-
-function formatDate() {
-    const date = new Date();
-    return `${date.toISOString()} -`;
-}
-
-
-async function logToFile(data, filename) {
-    try {
-        await fs.appendFile(filename, `${formatDate()} ${data}\n`);
-    } catch (err) {
-        console.error("Error writing to log file:", err);
-    }
-}
-
-
-app.post("/Contact", upload.single('file'), (req, res) => {
+// Route to handle Contact form submissions
+app.post("/Contact", upload.single('file'), async (req, res) => {
     const formData = req.body;
     const file = req.file;
-    logToFile(JSON.stringify(formData, null, 2), 'contact.log');
-    
-    const message = `New contact submission: \n\n Details: \n ${JSON.stringify(formData, null, 2)}`;
-    sendWhatsAppMessage(message);
-    
-    console.log(file);
-    console.log(formData);
-    res.json({ message: "Form submitted successfully", formData });
+
+    // Validate form data
+    if (!formData.fullName || !formData.city || !formData.telephone || !formData.address || !formData.message) {
+        return res.status(400).json({ error: "All fields are required" });
+    }
+
+    // Save data to MongoDB
+    const newContact = new Contact({
+        fullName: formData.fullName,
+        city: formData.city,
+        telephone: formData.telephone,
+        address: formData.address,
+        message: formData.message,
+        file: {
+            data: file.buffer,
+            contentType: file.mimetype
+        },
+        SchDate: formData.date,
+        date: new Date()
+    });
+
+    try {
+        const savedContact = await newContact.save();
+        res.json({ message: "Form submitted successfully", formData: savedContact });
+    } catch (err) {
+        console.error("Error saving contact:", err);
+        res.status(500).json({ error: "Failed to save contact" });
+    }
 });
 
-app.post("/Visited", (req, res) => {
+// Route to handle Visit records
+app.post("/Visited", async (req, res) => {
     const visitData = req.body;
 
-    logToFile(JSON.stringify(visitData, null, 2), 'visited.log');
-    const message = `New visit recorded: \n\n Details: \n ${JSON.stringify(visitData, null, 2)}`;
-    sendWhatsAppMessage(message);
-    
-    console.log(visitData);
-    res.json({ message: "Visited Person", visitData });
-});
+    // Validate visit data
+    if (!visitData.email || !visitData.phoneNumber) {
+        return res.status(400).json({ error: "Email and phone number are required" });
+    }
 
+    // Save data to MongoDB
+    const newVisit = new Visit({
+        email: visitData.email,
+        phoneNumber: visitData.phoneNumber,
+        date: new Date()
+    });
 
-app.get('/welcome', (req, res) => {
-    res.send('Welcome to my server!');
+    try {
+        const savedVisit = await newVisit.save();
+        res.json({ message: "Visit recorded successfully", visitData: savedVisit });
+    } catch (err) {
+        console.error("Error saving visit:", err);
+        res.status(500).json({ error: "Failed to save visit" });
+    }
 });
 
 app.listen(port, () => {
